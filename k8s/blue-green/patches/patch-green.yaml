@@ -1,0 +1,5 @@
+# kubectl patch service <name> --patch-file k8s/blue-green/patches/patch-green.yaml
+spec:
+  selector:
+    app: eventhub-bg
+    track: green

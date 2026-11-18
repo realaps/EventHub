@@ -1,0 +1,118 @@
+// EventHub CI/CD pipeline: GitHub -> Jenkins -> Docker -> Kubernetes
+// Works on a Windows Jenkins agent (bat) and a Linux agent (sh) without changes.
+// Requirements on the Jenkins machine: Git, Node.js 20+, Docker CLI, kubectl, curl,
+// and a kubectl context pointing at the cluster (e.g. docker-desktop).
+
+def run(String cmd) {
+  if (isUnix()) { sh cmd } else { bat cmd }
+}
+
+def output(String cmd) {
+  // "@" stops Windows from echoing the command into the captured output
+  return isUnix() ? sh(script: cmd, returnStdout: true).trim()
+                  : bat(script: "@${cmd}", returnStdout: true).trim()
+}
+
+pipeline {
+  agent any
+
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+
+  // A local Jenkins (localhost) cannot receive GitHub webhooks, so poll GitHub every ~2 minutes.
+  // If Jenkins has a public URL, replace this with a GitHub webhook.
+  triggers {
+    pollSCM('H/2 * * * *')
+  }
+
+  environment {
+    IMAGE_NAME = 'eventhub'
+    IMAGE_TAG  = "${env.BUILD_NUMBER}"
+    APP_URL    = 'http://localhost:30080'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+        script {
+          env.GIT_SHORT = output('git rev-parse --short HEAD')
+          echo "Building commit ${env.GIT_SHORT} as ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+        }
+      }
+    }
+
+    stage('Install') {
+      steps {
+        run 'npm ci'
+      }
+    }
+
+    stage('Validate') {
+      steps {
+        run 'npm run lint'   // TypeScript type check
+        run 'npm test'       // unit tests for event/registration rules
+      }
+    }
+
+    stage('Build Application') {
+      steps {
+        run 'npm run build'
+      }
+    }
+
+    stage('Build Docker Image') {
+      steps {
+        run "docker build -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} -t ${env.IMAGE_NAME}:latest ."
+        run "docker image ls ${env.IMAGE_NAME}"
+      }
+    }
+
+    stage('Deploy to Kubernetes') {
+      steps {
+        script {
+          // Put this build's image tag and version label into the Deployment manifest
+          def manifest = readFile('k8s/deployment.yaml')
+            .replace('image: eventhub:dev', "image: ${env.IMAGE_NAME}:${env.IMAGE_TAG}")
+            .replace('value: "dev"', "value: \"build-${env.IMAGE_TAG}\"")
+          writeFile file: 'rendered-deployment.yaml', text: manifest
+          env.DEPLOYED = 'true'
+        }
+        run 'kubectl apply -f rendered-deployment.yaml -f k8s/service.yaml'
+        run 'kubectl rollout status deployment/eventhub --timeout=180s'
+      }
+    }
+
+    stage('Verify') {
+      steps {
+        run 'kubectl get deployments,pods,services -l app=eventhub -o wide'
+        retry(5) {
+          sleep(time: 3, unit: 'SECONDS')
+          run "curl -fsS ${env.APP_URL}/api/health"
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "EventHub build ${env.IMAGE_TAG} (commit ${env.GIT_SHORT}) is live at ${env.APP_URL}"
+    }
+    failure {
+      script {
+        if (env.DEPLOYED == 'true') {
+          echo 'Deployment failed verification - rolling back to the previous ReplicaSet.'
+          try {
+            run 'kubectl rollout undo deployment/eventhub'
+          } catch (err) {
+            echo "No earlier version to roll back to (first deployment?): ${err}"
+          }
+        } else {
+          echo 'Pipeline failed before deployment - the running version was not touched.'
+        }
+      }
+    }
+  }
+}

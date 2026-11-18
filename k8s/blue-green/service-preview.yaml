@@ -1,0 +1,17 @@
+# PREVIEW service: http://localhost:30091 shows the idle colour,
+# so the new version can be tested before live traffic is switched.
+apiVersion: v1
+kind: Service
+metadata:
+  name: eventhub-bg-preview
+  labels:
+    app: eventhub-bg
+spec:
+  type: NodePort
+  selector:
+    app: eventhub-bg
+    track: green
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30091

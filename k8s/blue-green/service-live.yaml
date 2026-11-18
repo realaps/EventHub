@@ -1,0 +1,17 @@
+# LIVE service: users always open http://localhost:30090
+# Its selector decides which colour (blue or green) receives traffic.
+apiVersion: v1
+kind: Service
+metadata:
+  name: eventhub-bg
+  labels:
+    app: eventhub-bg
+spec:
+  type: NodePort
+  selector:
+    app: eventhub-bg
+    track: blue
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30090

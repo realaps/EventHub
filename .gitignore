@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+*.tsbuildinfo
+
+# logs
+npm-debug.log*
+*.log
+
+# environment / secrets - never commit these
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# keep evidence screenshots out of the repo unless you want them public
+evidence/
+
+# Jenkins-rendered manifests
+rendered-*.yaml
+
+# Terraform / Ansible / AWS CLI local state - never commit
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+aws/ansible/inventory.ini
+aws/cli/state.env
+*.pem

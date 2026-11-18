@@ -1,0 +1,42 @@
+# Managed by Ansible (EventHub) - manual changes will be overwritten
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /run/nginx.pid;
+
+include /usr/share/nginx/modules/*.conf;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    # JSON access log so CloudWatch metric filters can read fields like $.status
+    log_format eventhub_json escape=json
+        '{"time":"$time_iso8601","remote_addr":"$remote_addr","request":"$request",'
+        '"status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,'
+        '"referer":"$http_referer","user_agent":"$http_user_agent"}';
+    access_log /var/log/nginx/access.log eventhub_json;
+
+    sendfile          on;
+    keepalive_timeout 65;
+    server_tokens     off;
+    include           /etc/nginx/mime.types;
+    default_type      application/octet-stream;
+
+    server {
+        listen      80 default_server;
+        listen      [::]:80 default_server;
+        server_name _;
+
+        # EventHub runs in Docker on 127.0.0.1:3000 (not reachable from outside)
+        location / {
+            proxy_pass         http://127.0.0.1:3000;
+            proxy_http_version 1.1;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+        }
+    }
+}

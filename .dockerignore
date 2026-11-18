@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.gitignore
+*.log
+Dockerfile
+.dockerignore
+Jenkinsfile*
+k8s
+scripts
+docs
+evidence
+README.md
+.env*
+aws
+docs

@@ -1,0 +1,18 @@
+# Practice item: "simple Kubernetes Pod YAML"
+# kubectl apply -f k8s/practice/pod-test.yaml
+# kubectl get pod eventhub-test
+# kubectl port-forward pod/eventhub-test 3001:3000   ->  http://localhost:3001
+# kubectl delete -f k8s/practice/pod-test.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: eventhub-test
+  labels:
+    app: eventhub-test
+spec:
+  containers:
+    - name: eventhub
+      image: eventhub:dev
+      imagePullPolicy: IfNotPresent
+      ports:
+        - containerPort: 3000

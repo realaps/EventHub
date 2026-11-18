@@ -1,0 +1,21 @@
+#!/bin/bash
+# EventHub backup: archive app source + server config to the EBS volume (/data), then copy to S3.
+# Installed by Ansible. Runs daily from cron; run by hand: sudo /usr/local/bin/eventhub-backup.sh
+set -euo pipefail
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+DIR={{ data_dir }}/backups
+FILE="$DIR/eventhub-$STAMP.tar.gz"
+mkdir -p "$DIR"
+
+tar --exclude=opt/eventhub/.git -czf "$FILE" -C / \
+  opt/eventhub \
+  etc/nginx/nginx.conf \
+  opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+aws s3 cp "$FILE" "s3://{{ backup_bucket }}/backups/$(hostname)/" --region {{ aws_region }} --only-show-errors
+
+# keep only 3 days of local copies on the EBS volume
+find "$DIR" -name 'eventhub-*.tar.gz' -mtime +3 -delete
+
+echo "$(date -Is) backup OK: $(basename "$FILE") -> s3://{{ backup_bucket }}/backups/$(hostname)/" | tee -a /var/log/eventhub-backup.log
