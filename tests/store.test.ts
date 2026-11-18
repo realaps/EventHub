@@ -29,7 +29,7 @@ const validInput: NewEventInput = {
 };
 
 test('FR-01: sample events are available', () => {
-  assert.ok(initialState().events.length >= 4);
+  assert.ok(initialState().events.length >= 99);
 });
 
 test('FR-02: search narrows the list by keyword', () => {
