@@ -5,16 +5,16 @@
 // 4. Approve (or auto-switch), then switch the live Service selector
 // 5. Verify live traffic; on any failure after the switch, switch back (rollback)
 
-def run(String cmd) {
+def runCmd(String cmd) {
   if (isUnix()) { sh cmd } else { bat cmd }
 }
 
-def output(String cmd) {
+def runOut(String cmd) {
   return isUnix() ? sh(script: cmd, returnStdout: true).trim()
                   : bat(script: "@${cmd}", returnStdout: true).trim()
 }
 
-def status(String cmd) {
+def runStatus(String cmd) {
   return isUnix() ? sh(script: cmd, returnStatus: true)
                   : bat(script: "@${cmd}", returnStatus: true)
 }
@@ -46,28 +46,28 @@ pipeline {
 
     stage('Install & Validate') {
       steps {
-        run 'npm ci'
-        run 'npm run lint'
-        run 'npm test'
+        runCmd 'npm ci'
+        runCmd 'npm run lint'
+        runCmd 'npm test'
       }
     }
 
     stage('Build Docker Image') {
       steps {
-        run "docker build -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} ."
+        runCmd "docker build -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} ."
       }
     }
 
     stage('Detect Live Colour') {
       steps {
         script {
-          if (status('kubectl get service eventhub-bg') != 0) {
+          if (runStatus('kubectl get service eventhub-bg') != 0) {
             echo 'First Blue-Green run: creating the live and preview Services.'
-            run 'kubectl apply -f k8s/blue-green/service-live.yaml -f k8s/blue-green/service-preview.yaml'
+            runCmd 'kubectl apply -f k8s/blue-green/service-live.yaml -f k8s/blue-green/service-preview.yaml'
             env.LIVE = 'none'
             env.TARGET = 'blue'
           } else {
-            env.LIVE = output('kubectl get service eventhub-bg -o jsonpath="{.spec.selector.track}"')
+            env.LIVE = runOut('kubectl get service eventhub-bg -o jsonpath="{.spec.selector.track}"')
             env.TARGET = (env.LIVE == 'blue') ? 'green' : 'blue'
           }
           echo "LIVE colour: ${env.LIVE}  ->  deploying new version to: ${env.TARGET}"
@@ -83,17 +83,17 @@ pipeline {
             .replaceAll(/value: "v\d+"/, "value: \"build-${env.BUILD_NUMBER}\"")
           writeFile file: "rendered-${env.TARGET}.yaml", text: manifest
         }
-        run "kubectl apply -f rendered-${env.TARGET}.yaml"
-        run "kubectl rollout status deployment/eventhub-${env.TARGET} --timeout=180s"
+        runCmd "kubectl apply -f rendered-${env.TARGET}.yaml"
+        runCmd "kubectl rollout status deployment/eventhub-${env.TARGET} --timeout=180s"
       }
     }
 
     stage('Test Idle Colour') {
       steps {
         // Health check from inside the new Pod: must answer ok AND report the expected colour
-        run "kubectl exec deployment/eventhub-${env.TARGET} -- node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>r.json()).then(j=>process.exit(j.status==='ok'&&j.color==='${env.TARGET}'?0:1)).catch(()=>process.exit(1))\""
+        runCmd "kubectl exec deployment/eventhub-${env.TARGET} -- node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>r.json()).then(j=>process.exit(j.status==='ok'&&j.color==='${env.TARGET}'?0:1)).catch(()=>process.exit(1))\""
         // Point the preview Service at the new colour so a person can open it before go-live
-        run "kubectl patch service eventhub-bg-preview --patch-file k8s/blue-green/patches/patch-${env.TARGET}.yaml"
+        runCmd "kubectl patch service eventhub-bg-preview --patch-file k8s/blue-green/patches/patch-${env.TARGET}.yaml"
         echo "New version (${env.TARGET}) is available for preview at ${env.PREVIEW_URL}"
       }
     }
@@ -109,8 +109,8 @@ pipeline {
     stage('Switch Traffic') {
       steps {
         script { env.SWITCHED = 'true' }
-        run "kubectl patch service eventhub-bg --patch-file k8s/blue-green/patches/patch-${env.TARGET}.yaml"
-        run 'kubectl get service eventhub-bg -o wide'
+        runCmd "kubectl patch service eventhub-bg --patch-file k8s/blue-green/patches/patch-${env.TARGET}.yaml"
+        runCmd 'kubectl get service eventhub-bg -o wide'
       }
     }
 
@@ -119,7 +119,7 @@ pipeline {
         script {
           retry(5) {
             sleep(time: 3, unit: 'SECONDS')
-            def body = output("curl -fsS ${env.LIVE_URL}/api/health")
+            def body = runOut("curl -fsS ${env.LIVE_URL}/api/health")
             echo body
             if (!body.contains("\"color\":\"${env.TARGET}\"")) {
               error("Live service is not serving ${env.TARGET} yet")
@@ -127,7 +127,7 @@ pipeline {
           }
           if (env.LIVE != 'none') {
             // Keep the old colour reachable on the preview port for a quick manual rollback check
-            run "kubectl patch service eventhub-bg-preview --patch-file k8s/blue-green/patches/patch-${env.LIVE}.yaml"
+            runCmd "kubectl patch service eventhub-bg-preview --patch-file k8s/blue-green/patches/patch-${env.LIVE}.yaml"
           }
         }
       }
@@ -142,7 +142,7 @@ pipeline {
       script {
         if (env.SWITCHED == 'true' && env.LIVE != 'none') {
           echo "Verification failed - ROLLBACK: switching live traffic back to ${env.LIVE}"
-          run "kubectl patch service eventhub-bg --patch-file k8s/blue-green/patches/patch-${env.LIVE}.yaml"
+          runCmd "kubectl patch service eventhub-bg --patch-file k8s/blue-green/patches/patch-${env.LIVE}.yaml"
         } else {
           echo "Failed before the traffic switch - users were never affected (still on ${env.LIVE})."
         }

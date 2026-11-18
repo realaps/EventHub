@@ -3,11 +3,11 @@
 // Requirements on the Jenkins machine: Git, Node.js 20+, Docker CLI, kubectl, curl,
 // and a kubectl context pointing at the cluster (e.g. docker-desktop).
 
-def run(String cmd) {
+def runCmd(String cmd) {
   if (isUnix()) { sh cmd } else { bat cmd }
 }
 
-def output(String cmd) {
+def runOut(String cmd) {
   // "@" stops Windows from echoing the command into the captured output
   return isUnix() ? sh(script: cmd, returnStdout: true).trim()
                   : bat(script: "@${cmd}", returnStdout: true).trim()
@@ -38,7 +38,7 @@ pipeline {
       steps {
         checkout scm
         script {
-          env.GIT_SHORT = output('git rev-parse --short HEAD')
+          env.GIT_SHORT = runOut('git rev-parse --short HEAD')
           echo "Building commit ${env.GIT_SHORT} as ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
         }
       }
@@ -46,27 +46,27 @@ pipeline {
 
     stage('Install') {
       steps {
-        run 'npm ci'
+        runCmd 'npm ci'
       }
     }
 
     stage('Validate') {
       steps {
-        run 'npm run lint'   // TypeScript type check
-        run 'npm test'       // unit tests for event/registration rules
+        runCmd 'npm run lint'   // TypeScript type check
+        runCmd 'npm test'       // unit tests for event/registration rules
       }
     }
 
     stage('Build Application') {
       steps {
-        run 'npm run build'
+        runCmd 'npm run build'
       }
     }
 
     stage('Build Docker Image') {
       steps {
-        run "docker build -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} -t ${env.IMAGE_NAME}:latest ."
-        run "docker image ls ${env.IMAGE_NAME}"
+        runCmd "docker build -t ${env.IMAGE_NAME}:${env.IMAGE_TAG} -t ${env.IMAGE_NAME}:latest ."
+        runCmd "docker image ls ${env.IMAGE_NAME}"
       }
     }
 
@@ -80,17 +80,17 @@ pipeline {
           writeFile file: 'rendered-deployment.yaml', text: manifest
           env.DEPLOYED = 'true'
         }
-        run 'kubectl apply -f rendered-deployment.yaml -f k8s/service.yaml'
-        run 'kubectl rollout status deployment/eventhub --timeout=180s'
+        runCmd 'kubectl apply -f rendered-deployment.yaml -f k8s/service.yaml'
+        runCmd 'kubectl rollout status deployment/eventhub --timeout=180s'
       }
     }
 
     stage('Verify') {
       steps {
-        run 'kubectl get deployments,pods,services -l app=eventhub -o wide'
+        runCmd 'kubectl get deployments,pods,services -l app=eventhub -o wide'
         retry(5) {
           sleep(time: 3, unit: 'SECONDS')
-          run "curl -fsS ${env.APP_URL}/api/health"
+          runCmd "curl -fsS ${env.APP_URL}/api/health"
         }
       }
     }
@@ -105,7 +105,7 @@ pipeline {
         if (env.DEPLOYED == 'true') {
           echo 'Deployment failed verification - rolling back to the previous ReplicaSet.'
           try {
-            run 'kubectl rollout undo deployment/eventhub'
+            runCmd 'kubectl rollout undo deployment/eventhub'
           } catch (err) {
             echo "No earlier version to roll back to (first deployment?): ${err}"
           }
