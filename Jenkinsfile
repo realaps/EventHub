@@ -70,6 +70,18 @@ pipeline {
       }
     }
 
+    stage('Security Scan') {
+      steps {
+        // DevSecOps: report known vulnerabilities. Findings mark this stage UNSTABLE (yellow)
+        // but do not stop deployment. To enforce, remove the catchError wrappers.
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+          runCmd 'npm audit --omit=dev --audit-level=high'
+        }
+        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+          runCmd "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache aquasec/trivy:latest image --severity HIGH,CRITICAL --ignore-unfixed --no-progress --exit-code 1 ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+        }
+      }
+    }
     stage('Deploy to Kubernetes') {
       steps {
         script {
