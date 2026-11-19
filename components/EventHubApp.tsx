@@ -152,7 +152,7 @@ export default function EventHubApp({ buildInfo }: { buildInfo: BuildInfo }) {
           <span className="logo">EH</span>
           <div>
             <h1>EventHub</h1>
-            <p>College Event Management Portal</p>
+            <p>College Event Management Portal - Final Demo</p>
           </div>
         </div>
         <nav className="tabs" aria-label="Sections">
