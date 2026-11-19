@@ -5,7 +5,7 @@
 EventHub is a small Next.js web app for discovering and registering for campus events. It is shipped through an automated DevOps pipeline:
 **GitHub → Jenkins → Docker → Kubernetes**, plus an **automated Blue-Green deployment** with approval and rollback.
 
-> **Prototype limits (say this in the viva):** data is kept in the browser's `localStorage`, so it is **not** a shared database. Another browser won't see the same registrations. There is **no real login**: the "demo student name" box just simulates different students. The local Kubernetes cluster has a single node and is not production high-availability.
+> **Prototype limits (say this in the viva):** data is kept in the browser's `localStorage`, so it is **not** a shared database. Another browser won't see the same accounts or registrations. The login is a client-side demo: passwords are hashed, but there is no server-side authentication. To demo two roles, log out and log in as another account in the same browser. The local Kubernetes cluster has a single node and is not production high-availability.
 
 ---
 
@@ -16,10 +16,11 @@ EventHub/
 ├── app/
 │   ├── layout.tsx, page.tsx, globals.css   UI shell and styles
 │   └── api/health/route.ts                 GET /api/health → {status, version, color, hostname}
-├── components/EventHubApp.tsx              Events, My Events and Organizer screens
-├── lib/store.ts                            Business rules (register, capacity, add/remove) + localStorage
+├── components/                            Login/sign-up, events, event details, team form, organiser dashboard
+├── lib/store.ts                            Business rules: accounts, roles, permissions, teams, requests + localStorage
+├── lib/sha256.ts                           Password hashing that also works over plain HTTP (AWS demo)
 ├── lib/buildInfo.ts                        Reads APP_VERSION / APP_COLOR / POD_NAME from env
-├── tests/store.test.ts                     11 unit tests (run in Jenkins "Validate" stage)
+├── tests/store.test.ts                     13 unit tests (roles, ownership, teams, requests) (run in Jenkins "Validate" stage)
 ├── Dockerfile, .dockerignore               Multi-stage image (node:22-alpine, non-root, healthcheck)
 ├── Jenkinsfile                             CI/CD pipeline → Kubernetes (5-mark VLE)
 ├── Jenkinsfile.bluegreen                   Automated Blue-Green pipeline (5-mark VLE)
@@ -37,7 +38,13 @@ EventHub/
 └── docs/ecommerce-deployment-failure-case.md   Written answer for the case-scenario VLE
 ```
 
-**Features:** browse events, search, filter by category, view details, register/cancel (blocks duplicates, enforces capacity), My Events (still there after a refresh), organizer create/remove event, totals for events, registrations and students, and a "Reset demo data" button. The coloured strip and the version badge in the header show which version and colour (blue/green) served the page.
+**Features:**
+- **Login and sign-up** with two roles, **Student** and **Organiser**. Passwords are stored hashed (SHA-256). Four demo accounts use the password `demo123`.
+- **Students** browse, search and filter events, view details and join. For team events they register as a **group** (team name plus members, within the event's team-size limits). They can also **request to volunteer** and see everything in **My Events**.
+- **Organisers** create events and can **edit or delete only their own**. They can view all other events and **request to co-organise** them.
+- The **organiser dashboard** shows stats, approves or rejects **volunteer** and **co-organiser** requests, and lists each event's registrations (teams with members) and approved volunteers.
+- Capacity counts one seat per team member. Duplicate registrations and team names are blocked.
+- The coloured strip and version badge in the header show which version and colour (blue/green) served the page.
 
 ---
 
@@ -61,14 +68,18 @@ EventHub/
 ```powershell
 cd EventHub
 npm install          # first time only: this CREATES package-lock.json
-npm test             # 11 tests should pass
+npm test             # 13 tests should pass
 npm run lint         # TypeScript check, no output = OK
 npm run dev          # open http://localhost:3000
 ```
 
 > ⚠️ **Commit `package-lock.json`.** The Dockerfile and Jenkins use `npm ci`, and `npm ci` fails if there's no lockfile.
 
-**Smoke test (FR-01 to FR-09):** type a student name → search "hack" → filter by Sports → Register → open My Events → refresh (it's still there) → Organizer → create an event → check the counts → remove an event. Also open http://localhost:3000/api/health.
+**Smoke test (two roles):**
+1. Log in as `student@srm.demo` (password `demo123`). Join Tech Symposium. Register a team for Campus Hackathon. Request to volunteer for the Docker workshop. Check My Events.
+2. Log out and log in as `techclub@srm.demo`. Open the Dashboard: you should see the registrations (the team with its members) and the volunteer request, so approve it. Edit one of your events. Open Cultural Night: there's no Edit button, because it isn't yours.
+3. Sign up as a new Organiser and request to co-organise Campus Hackathon. Log back in as `techclub@srm.demo` and approve the request. The new organiser now sees it on their Dashboard as Co-organiser.
+4. Open http://localhost:3000/api/health.
 
 ---
 

@@ -1,63 +1,58 @@
 'use client';
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { BuildInfo } from '@/lib/buildInfo';
 import {
   addEvent,
+  canManage,
   CATEGORIES,
   filterEvents,
+  findUser,
   initialState,
-  isRegistered,
+  isOwner,
   loadState,
-  myEvents,
-  register,
-  registrationCount,
-  removeEvent,
+  login,
+  organiserStats,
   saveState,
   seatsLeft,
-  stats,
-  unregister,
+  SESSION_KEY,
+  signup,
+  updateEvent,
+  userRegistration,
   type AppState,
   type Category,
   type EventItem,
-  type NewEventInput,
+  type User,
 } from '@/lib/store';
+import AuthScreen from './AuthScreen';
+import EventForm from './EventForm';
+import EventModal from './EventModal';
+import OrganiserDashboard from './OrganiserDashboard';
+import StudentMyEvents from './StudentMyEvents';
+import { formatDate } from './ui';
 
-type Tab = 'events' | 'mine' | 'organizer';
-
-const STUDENT_KEY = 'eventhub:student';
-
-const EMPTY_FORM: NewEventInput = {
-  title: '',
-  category: 'Technical',
-  date: '',
-  time: '10:00',
-  venue: '',
-  description: '',
-  capacity: 50,
-};
-
-function formatDate(date: string, time: string): string {
-  const d = new Date(`${date}T${time}:00`);
-  if (Number.isNaN(d.getTime())) return `${date} ${time}`;
-  return d.toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
+type Tab = 'events' | 'mine' | 'dashboard';
 
 export default function EventHubApp({ buildInfo }: { buildInfo: BuildInfo }) {
   const [state, setState] = useState<AppState>(initialState);
+  const [userId, setUserId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>('events');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category | 'All'>('All');
-  const [student, setStudent] = useState('');
-  const [selected, setSelected] = useState<EventItem | null>(null);
-  const [form, setForm] = useState<NewEventInput>(EMPTY_FORM);
+  const [onlyMine, setOnlyMine] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [formFor, setFormFor] = useState<'new' | EventItem | null>(null);
   const [toast, setToast] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
-  // Load saved data once in the browser (localStorage is not available on the server).
+  // Load saved data and session once in the browser (localStorage is not available on the server).
   useEffect(() => {
     setState(loadState());
-    setStudent(window.localStorage.getItem(STUDENT_KEY) ?? '');
+    try {
+      setUserId(window.localStorage.getItem(SESSION_KEY));
+    } catch {
+      /* storage blocked */
+    }
     setLoaded(true);
   }, []);
 
@@ -66,238 +61,217 @@ export default function EventHubApp({ buildInfo }: { buildInfo: BuildInfo }) {
   }, [state, loaded]);
 
   useEffect(() => {
-    if (loaded) window.localStorage.setItem(STUDENT_KEY, student);
-  }, [student, loaded]);
+    if (!loaded) return;
+    try {
+      if (userId) window.localStorage.setItem(SESSION_KEY, userId);
+      else window.localStorage.removeItem(SESSION_KEY);
+    } catch {
+      /* storage blocked */
+    }
+  }, [userId, loaded]);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
+    const t = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(t);
   }, [toast]);
 
-  const visible = useMemo(() => filterEvents(state.events, query, category), [state.events, query, category]);
-  const mine = useMemo(() => myEvents(state, student), [state, student]);
-  const totals = stats(state);
+  const user = findUser(state, userId);
 
-  function run(action: () => AppState, success: string) {
+  const visible = useMemo(() => {
+    const list = filterEvents(state.events, query, category);
+    return onlyMine && user ? list.filter((e) => canManage(e, user)) : list;
+  }, [state.events, query, category, onlyMine, user]);
+
+  /** Run a state change; show a toast; return true on success. */
+  function act(fn: () => AppState, success: string): boolean {
     try {
-      setState(action());
+      setState(fn());
       setToast({ kind: 'ok', text: success });
+      return true;
     } catch (err) {
       setToast({ kind: 'error', text: err instanceof Error ? err.message : 'Something went wrong.' });
+      return false;
     }
   }
 
-  function handleRegister(ev: EventItem) {
-    run(() => register(state, ev.id, student), `Registered for ${ev.title}.`);
+  async function handleLogin(email: string, password: string) {
+    const u = await login(state, email, password);
+    setUserId(u.id);
+    setTab('events');
+    setToast({ kind: 'ok', text: `Welcome back, ${u.name}.` });
   }
 
-  function handleUnregister(ev: EventItem) {
-    run(() => unregister(state, ev.id, student), `Registration for ${ev.title} cancelled.`);
+  async function handleSignup(input: Parameters<typeof signup>[1]) {
+    const { state: next, user: u } = await signup(state, input);
+    setState(next);
+    setUserId(u.id);
+    setTab('events');
+    setToast({ kind: 'ok', text: `Account created. Welcome, ${u.name}!` });
   }
 
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    run(() => {
-      const next = addEvent(state, form);
-      setForm(EMPTY_FORM);
-      return next;
-    }, `Event "${form.title.trim()}" created.`);
+  function logout() {
+    setUserId(null);
+    setOpenId(null);
+    setFormFor(null);
+    setOnlyMine(false);
   }
 
-  function handleRemove(ev: EventItem) {
-    if (!window.confirm(`Remove "${ev.title}" and its registrations?`)) return;
-    run(() => removeEvent(state, ev.id), `Event "${ev.title}" removed.`);
-    if (selected?.id === ev.id) setSelected(null);
-  }
-
-  function handleReset() {
-    if (!window.confirm('Reset all demo data to the sample events?')) return;
+  function resetDemo() {
+    if (!window.confirm('Reset all demo data (accounts, events, registrations, requests)?')) return;
     setState(initialState());
-    setToast({ kind: 'ok', text: 'Demo data reset.' });
+    logout();
   }
 
-  function renderCard(ev: EventItem) {
-    const count = registrationCount(state, ev.id);
-    const left = seatsLeft(state, ev.id);
-    const registered = student.trim() !== '' && isRegistered(state, ev.id, student);
-    return (
-      <article key={ev.id} className="card" data-testid="event-card">
-        <div className="card-top">
-          <span className={`chip chip-${ev.category.toLowerCase()}`}>{ev.category}</span>
-          <span className="seats">{left > 0 ? `${left} seats left` : 'Full'}</span>
+  const header = (
+    <header className="topbar">
+      <div className="brand">
+        <span className="logo">EH</span>
+        <div>
+          <h1>EventHub</h1>
+          <p>College Event Management Portal</p>
         </div>
-        <h3>{ev.title}</h3>
-        <p className="meta">{formatDate(ev.date, ev.time)}</p>
-        <p className="meta">{ev.venue}</p>
-        <p className="count">{count} registered</p>
-        <div className="actions">
-          <button className="btn ghost" onClick={() => setSelected(ev)}>Details</button>
-          {registered ? (
-            <button className="btn danger" onClick={() => handleUnregister(ev)}>Cancel</button>
+      </div>
+      {user && (
+        <nav className="tabs" aria-label="Sections">
+          <button className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>Events</button>
+          {user.role === 'student' ? (
+            <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>
+              My Events <span className="badge">{state.registrations.filter((r) => r.userId === user.id).length}</span>
+            </button>
           ) : (
-            <button className="btn primary" onClick={() => handleRegister(ev)} disabled={left <= 0}>
-              Register
+            <button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>
+              Dashboard {(() => {
+                const s = organiserStats(state, user);
+                const n = s.pendingVolunteers + s.pendingCoOrganisers;
+                return n > 0 ? <span className="badge warn">{n}</span> : null;
+              })()}
             </button>
           )}
+        </nav>
+      )}
+      {user && (
+        <div className="who">
+          <span className={`role-tag ${user.role}`}>{user.role === 'organiser' ? 'Organiser' : 'Student'}</span>
+          <span className="who-name" data-testid="who">{user.name}</span>
+          <button className="btn ghost small" onClick={logout}>Log out</button>
         </div>
-      </article>
-    );
-  }
+      )}
+      <span className="version" title={`Served by ${buildInfo.hostname}`} data-testid="version">
+        {buildInfo.version}
+        {buildInfo.color !== 'none' ? ` · ${buildInfo.color}` : ''}
+      </span>
+    </header>
+  );
+
+  const openEvent = openId ? state.events.find((e) => e.id === openId) : undefined;
 
   return (
     <div className={`shell track-${buildInfo.color}`}>
-      <header className="topbar">
-        <div className="brand">
-          <span className="logo">EH</span>
-          <div>
-            <h1>EventHub</h1>
-            <p>College Event Management Portal - Final Demo</p>
-          </div>
-        </div>
-        <nav className="tabs" aria-label="Sections">
-          <button className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>Events</button>
-          <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>
-            My Events <span className="badge">{mine.length}</span>
-          </button>
-          <button className={tab === 'organizer' ? 'active' : ''} onClick={() => setTab('organizer')}>Organizer</button>
-        </nav>
-        <span className="version" title={`Served by ${buildInfo.hostname}`} data-testid="version">
-          {buildInfo.version}
-          {buildInfo.color !== 'none' ? ` · ${buildInfo.color}` : ''}
-        </span>
-      </header>
+      {header}
 
-      <section className="student-bar">
-        <label htmlFor="student">Demo student name</label>
-        <input
-          id="student"
-          value={student}
-          onChange={(e) => setStudent(e.target.value)}
-          placeholder="e.g. Demo Student 1"
-        />
-        <small>Prototype only: no login. Change the name to act as a different student.</small>
-      </section>
-
-      <main>
-        {tab === 'events' && (
-          <>
-            <div className="toolbar">
-              <input
-                className="search"
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by name, venue or keyword"
-                aria-label="Search events"
-              />
-              <select value={category} onChange={(e) => setCategory(e.target.value as Category | 'All')} aria-label="Filter by category">
-                <option value="All">All categories</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </div>
-            {visible.length === 0 ? (
-              <p className="empty">No events match your search.</p>
-            ) : (
-              <div className="grid">{visible.map(renderCard)}</div>
-            )}
-          </>
-        )}
-
-        {tab === 'mine' && (
-          <>
-            <h2>My Events</h2>
-            {student.trim() === '' ? (
-              <p className="empty">Enter a demo student name above to see your registrations.</p>
-            ) : mine.length === 0 ? (
-              <p className="empty">{student.trim()} has not registered for any events yet.</p>
-            ) : (
-              <div className="grid">{mine.map(renderCard)}</div>
-            )}
-          </>
-        )}
-
-        {tab === 'organizer' && (
-          <>
-            <div className="stats">
-              <div><strong>{totals.totalEvents}</strong><span>Events</span></div>
-              <div><strong>{totals.totalRegistrations}</strong><span>Registrations</span></div>
-              <div><strong>{totals.uniqueStudents}</strong><span>Students</span></div>
-            </div>
-
-            <div className="organizer">
-              <form className="panel" onSubmit={handleCreate}>
-                <h2>Create event</h2>
-                <label>Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
-                <label>Category
-                  <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as Category })}>
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </label>
-                <div className="row">
-                  <label>Date<input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
-                  <label>Time<input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} required /></label>
-                </div>
-                <label>Venue<input value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} required /></label>
-                <label>Capacity<input type="number" min={1} value={form.capacity} onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })} /></label>
-                <label>Description<textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
-                <button className="btn primary" type="submit">Create event</button>
-              </form>
-
-              <div className="panel">
-                <div className="panel-head">
-                  <h2>Manage events</h2>
-                  <button className="btn ghost small" onClick={handleReset}>Reset demo data</button>
-                </div>
-                <table>
-                  <thead>
-                    <tr><th>Event</th><th>Date</th><th>Registered</th><th></th></tr>
-                  </thead>
-                  <tbody>
-                    {filterEvents(state.events, '', 'All').map((ev) => (
-                      <tr key={ev.id}>
-                        <td>{ev.title}<br /><small>{ev.category} · {ev.venue}</small></td>
-                        <td>{ev.date}</td>
-                        <td>{registrationCount(state, ev.id)} / {ev.capacity}</td>
-                        <td><button className="btn danger small" onClick={() => handleRemove(ev)}>Remove</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+      {!loaded ? null : !user ? (
+        <AuthScreen onLogin={handleLogin} onSignup={handleSignup} />
+      ) : (
+        <main>
+          {tab === 'events' && (
+            <>
+              <div className="toolbar">
+                <input className="search" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by name, venue or keyword" aria-label="Search events" />
+                <select value={category} onChange={(e) => setCategory(e.target.value as Category | 'All')} aria-label="Filter by category">
+                  <option value="All">All categories</option>
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                {user.role === 'organiser' && (
+                  <>
+                    <label className="check inline">
+                      <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} /> Only events I manage
+                    </label>
+                    <button className="btn primary" onClick={() => setFormFor('new')}>+ Create event</button>
+                  </>
+                )}
               </div>
-            </div>
-          </>
-        )}
-      </main>
+              {visible.length === 0 ? (
+                <p className="empty">No events match.</p>
+              ) : (
+                <div className="grid">
+                  {visible.map((ev) => (
+                    <EventCard key={ev.id} ev={ev} state={state} user={user} onOpen={() => setOpenId(ev.id)} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
 
-      {selected && (
-        <div className="overlay" role="dialog" aria-modal="true" onClick={() => setSelected(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <span className={`chip chip-${selected.category.toLowerCase()}`}>{selected.category}</span>
-            <h2>{selected.title}</h2>
-            <p className="meta">{formatDate(selected.date, selected.time)} · {selected.venue}</p>
-            <p>{selected.description || 'No description provided.'}</p>
-            <p className="meta">
-              {registrationCount(state, selected.id)} registered · {seatsLeft(state, selected.id)} of {selected.capacity} seats left
-            </p>
-            <div className="registrants">
-              <strong>Registered students (demo):</strong>{' '}
-              {state.registrations.filter((r) => r.eventId === selected.id).map((r) => r.studentName).join(', ') || 'None yet'}
-            </div>
-            <div className="actions">
-              <button className="btn ghost" onClick={() => setSelected(null)}>Close</button>
-            </div>
-          </div>
-        </div>
+          {tab === 'mine' && user.role === 'student' && <StudentMyEvents state={state} user={user} onOpen={setOpenId} />}
+
+          {tab === 'dashboard' && user.role === 'organiser' && (
+            <OrganiserDashboard state={state} user={user} act={act} onCreate={() => setFormFor('new')} onOpen={setOpenId} />
+          )}
+        </main>
+      )}
+
+      {user && openEvent && (
+        <EventModal
+          key={openEvent.id}
+          event={openEvent}
+          state={state}
+          user={user}
+          act={act}
+          onEdit={() => { setFormFor(openEvent); setOpenId(null); }}
+          onClose={() => setOpenId(null)}
+        />
+      )}
+
+      {user && formFor && (
+        <EventForm
+          event={formFor === 'new' ? undefined : formFor}
+          onClose={() => setFormFor(null)}
+          onSubmit={(input) =>
+            formFor === 'new'
+              ? act(() => addEvent(state, user, input), `Event "${input.title.trim()}" created.`)
+              : act(() => updateEvent(state, user, formFor.id, input), 'Event updated.')
+          }
+        />
       )}
 
       {toast && <div className={`toast ${toast.kind}`} role="status">{toast.text}</div>}
 
       <footer>
-        EventHub prototype · data is stored in this browser only (localStorage) · Pod: {buildInfo.hostname}
+        EventHub prototype · data and accounts are stored in this browser only ·{' '}
+        <button className="linkish" onClick={resetDemo}>Reset demo data</button> · Pod: {buildInfo.hostname}
       </footer>
     </div>
+  );
+}
+
+function EventCard({ ev, state, user, onOpen }: { ev: EventItem; state: AppState; user: User; onOpen: () => void }) {
+  const left = seatsLeft(state, ev.id);
+  const owner = findUser(state, ev.ownerId);
+  const reg = user.role === 'student' ? userRegistration(state, ev.id, user.id) : undefined;
+  const mine = isOwner(ev, user);
+  const co = !mine && canManage(ev, user);
+  return (
+    <article className="card" data-testid="event-card">
+      <div className="card-top">
+        <span className={`chip chip-${ev.category.toLowerCase()}`}>{ev.category}</span>
+        <span className="seats">{left > 0 ? `${left} seats left` : 'Full'}</span>
+      </div>
+      <h3>{ev.title}</h3>
+      <p className="meta">{formatDate(ev.date, ev.time)}</p>
+      <p className="meta">{ev.venue}</p>
+      <p className="meta small">by {owner?.organisation ?? owner?.name}</p>
+      <div className="tags">
+        {ev.isGroupEvent && <span className="chip chip-group">Team {ev.minTeamSize}-{ev.maxTeamSize}</span>}
+        {reg && <span className="chip chip-ok">{reg.type === 'group' ? `Team ${reg.teamName}` : 'Registered'}</span>}
+        {mine && <span className="chip chip-owner">Your event</span>}
+        {co && <span className="chip chip-owner">Co-organiser</span>}
+      </div>
+      <div className="actions">
+        <button className="btn primary" onClick={onOpen}>
+          {user.role === 'student' ? (reg ? 'View registration' : 'View & join') : mine ? 'Manage' : 'View'}
+        </button>
+      </div>
+    </article>
   );
 }
