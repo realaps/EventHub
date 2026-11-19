@@ -25,7 +25,10 @@ fi
 
 if ! command -v ansible-playbook >/dev/null 2>&1; then
   echo "==> Installing Ansible (ansible-core)"
-  python3 -m pip install --user --quiet ansible-core
+  # CloudShell's python is a virtualenv, so "pip --user" is refused: use our own venv in $HOME (persists)
+  python3 -m venv "$HOME/.ansible-venv"
+  "$HOME/.ansible-venv/bin/pip" install --quiet ansible-core
+  ln -sf "$HOME"/.ansible-venv/bin/ansible* "$BIN/"
 fi
 
 grep -q 'HOME/.local/bin' "$HOME/.bashrc" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"

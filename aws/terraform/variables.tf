@@ -1,7 +1,7 @@
 variable "region" {
-  description = "AWS region (ap-south-1 = Mumbai)"
+  description = "AWS region (ap-southeast-2 = Sydney; this account blocks Mumbai)"
   type        = string
-  default     = "ap-south-1"
+  default     = "ap-southeast-2"
 }
 
 variable "instance_type" {

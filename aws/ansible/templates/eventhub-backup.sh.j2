@@ -11,7 +11,7 @@ mkdir -p "$DIR"
 tar --exclude=opt/eventhub/.git -czf "$FILE" -C / \
   opt/eventhub \
   etc/nginx/nginx.conf \
-  opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+  opt/aws/amazon-cloudwatch-agent/etc
 
 aws s3 cp "$FILE" "s3://{{ backup_bucket }}/backups/$(hostname)/" --region {{ aws_region }} --only-show-errors
 
